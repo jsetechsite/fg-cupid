@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Food Gang's Cupid Matchmaker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #ffdeeb;
+            font-family: 'Press+Start+2P', cursive;
+            touch-action: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: linear-gradient(to bottom, #ff758c 0%, #ff7eb3 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            display: block;
+            background-color: rgba(255, 255, 255, 0.15);
+            cursor: crosshair;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 0;
+            width: 100%;
+            pointer-events: none;
+            display: flex;
+            justify-content: space-around;
+            color: #ffffff;
+            font-size: 16px;
+            text-shadow: 3px 3px 0px #c9184a;
+            z-index: 50;
+        }
+
+        #overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(139, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            z-index: 100;
+            padding: 20px;
+            color: white;
+        }
+
+        .btn {
+            background: #ff4d6d;
+            color: white;
+            border: 4px solid #ffffff;
+            padding: 18px 36px;
+            margin-top: 20px;
+            cursor: pointer;
+            pointer-events: auto;
+            font-size: 18px;
+            font-family: 'Press+Start+2P', cursive;
+            transition: all 0.1s;
+            box-shadow: 0 6px 0 #c9184a;
+        }
+
+        .btn:active {
+            transform: translateY(4px);
+            box-shadow: 0 2px 0 #c9184a;
+            background: #c9184a;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="ui-layer">
+            <div>SCORE: <span id="score-val">0</span></div>
+            <div>TIME: <span id="time-val">01:00</span></div>
+        </div>
+
+        <canvas id="gameCanvas"></canvas>
+
+        <div id="overlay">
+            <h1 id="status-title" class="text-3xl mb-4 text-white drop-shadow-lg text-center">FOOD GANG'S<br>CUPID MATCHMAKER</h1>
+            <p id="status-desc" class="mb-6 text-xs leading-loose text-pink-100">Quick! You have 60 seconds.<br>Pair 1 Boy & 1 Girl to score!<br>Enjoy the adventure beats.</p>
+            <div id="final-score" class="hidden text-xl mb-6 bg-white text-pink-600 p-4 rounded-lg">FINAL SCORE: 0</div>
+            <button id="start-btn" class="btn">START ADVENTURE</button>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score-val');
+    const timeEl = document.getElementById('time-val');
+    const overlay = document.getElementById('overlay');
+    const statusTitle = document.getElementById('status-title');
+    const finalScoreEl = document.getElementById('final-score');
+    const startBtn = document.getElementById('start-btn');
+
+    let score = 0;
+    let timeLeft = 60; // Set to 1 minute
+    let gameActive = false;
+    let timerInterval = null;
+    let audioCtx = null;
+    let musicInterval = null;
+
+    const assets = {
+        cupidX: 0,
+        cupidY: 0,
+        arrows: [],
+        npcs: [],
+        particles: []
+    };
+
+    // --- ENHANCED PIXEL AUDIO ENGINE ---
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+
+    function playTone(freq, type, duration, vol = 0.1, slideTo = null) {
+        if (!audioCtx || audioCtx.state === 'suspended') return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        if (slideTo) {
+            osc.frequency.exponentialRampToValueAtTime(slideTo, audioCtx.currentTime + duration);
+        }
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+    }
+
+    function soundShoot() {
+        playTone(800, 'square', 0.1, 0.05, 200);
+    }
+
+    function soundHit() {
+        playTone(200, 'sawtooth', 0.1, 0.08, 50);
+    }
+
+    function soundMatch() {
+        const now = audioCtx.currentTime;
+        [523.25, 659.25, 783.99, 1046.50].forEach((f, i) => {
+            setTimeout(() => playTone(f, 'triangle', 0.2, 0.08), i * 60);
+        });
+    }
+
+    // --- ADVENTURE MUSIC ENGINE ---
+    let step = 0;
+    const melody = [329.63, 0, 329.63, 392, 261.63, 0, 293.66, 0, 329.63, 349.23, 329.63, 293.66, 261.63, 0, 196, 0];
+    const bass = [130.81, 130.81, 164.81, 164.81, 196, 196, 174.61, 174.61];
+
+    function musicLoop() {
+        if (!gameActive) return;
+
+        // Play Bass
+        const bassFreq = bass[Math.floor(step / 2) % bass.length];
+        if (step % 2 === 0) playTone(bassFreq, 'square', 0.2, 0.03);
+
+        // Play Melody
+        const note = melody[step % melody.length];
+        if (note > 0) {
+            playTone(note, 'triangle', 0.15, 0.04);
+        }
+
+        // Drum (noise-ish)
+        if (step % 4 === 0) playTone(50, 'sine', 0.05, 0.05, 10);
+
+        step++;
+        musicInterval = setTimeout(musicLoop, 150);
+    }
+
+    // --- GAME LOGIC ---
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        assets.cupidX = canvas.width / 2;
+        assets.cupidY = canvas.height - 100;
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    function drawPixelHeart(x, y, size, color) {
+        ctx.fillStyle = color;
+        const s = size / 5;
+        const heart = [
+            [0,1,0,1,0],
+            [1,1,1,1,1],
+            [1,1,1,1,1],
+            [0,1,1,1,0],
+            [0,0,1,0,0]
+        ];
+        heart.forEach((row, ri) => {
+            row.forEach((pixel, pi) => {
+                if (pixel) ctx.fillRect(x + pi * s - size/2, y + ri * s - size/2, s, s);
+            });
+        });
+    }
+
+    function drawPixelPerson(x, y, isGirl) {
+        const s = 4;
+        ctx.fillStyle = "#ffdbac";
+        ctx.fillRect(x - s, y - s*4, s*2, s*2);
+        ctx.fillStyle = isGirl ? "#4a2c2a" : "#2b1d1d";
+        ctx.fillRect(x - s, y - s*5, s*2, s);
+        if(isGirl) ctx.fillRect(x + s, y - s*4, s, s*3);
+        ctx.fillStyle = isGirl ? "#ff4d6d" : "#00b4d8";
+        ctx.fillRect(x - s, y - s*2, s*2, s*3);
+        ctx.fillStyle = "#111";
+        ctx.fillRect(x - s, y + s, s/2, s);
+        ctx.fillRect(x + s/2, y + s, s/2, s);
+    }
+
+    class NPC {
+        constructor() {
+            this.isGirl = Math.random() > 0.5;
+            this.x = Math.random() * (canvas.width - 80) + 40;
+            this.y = -50;
+            this.speed = 1.5 + Math.random() * 2.5; // Slightly faster for 1min game
+            this.hitCount = 0;
+            this.pulse = 0;
+        }
+        update() {
+            this.y += this.speed;
+            this.pulse += 0.15;
+        }
+        draw() {
+            if (this.hitCount > 0) {
+                ctx.strokeStyle = "white";
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y - 12, 22 + Math.sin(this.pulse) * 4, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            drawPixelPerson(this.x, this.y, this.isGirl);
+        }
+    }
+
+    class Arrow {
+        constructor(tx, ty) {
+            this.x = assets.cupidX;
+            this.y = assets.cupidY;
+            const angle = Math.atan2(ty - this.y, tx - this.x);
+            this.vx = Math.cos(angle) * 18;
+            this.vy = Math.sin(angle) * 18;
+            this.active = true;
+        }
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            if (this.x < -50 || this.x > canvas.width + 50 || this.y < -50 || this.y > canvas.height + 50) {
+                this.active = false;
+            }
+        }
+        draw() {
+            ctx.fillStyle = "#fff";
+            ctx.fillRect(this.x - 2, this.y - 2, 4, 4);
+            ctx.fillStyle = "#ff4d6d";
+            ctx.fillRect(this.x + (this.vx*0.3), this.y + (this.vy*0.3), 4, 4);
+        }
+    }
+
+    function startGame() {
+        initAudio();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        if (timerInterval) clearInterval(timerInterval);
+        if (musicInterval) clearTimeout(musicInterval);
+        
+        score = 0;
+        timeLeft = 60; 
+        assets.npcs = [];
+        assets.arrows = [];
+        assets.particles = [];
+        step = 0;
+        
+        overlay.style.display = 'none';
+        finalScoreEl.classList.add('hidden');
+        updateUI();
+        
+        resize();
+        gameActive = true;
+        
+        timerInterval = setInterval(() => {
+            if (gameActive) {
+                timeLeft--;
+                updateUI();
+                if (timeLeft <= 0) endGame();
+            }
+        }, 1000);
+
+        musicLoop();
+    }
+
+    function endGame() {
+        gameActive = false;
+        clearInterval(timerInterval);
+        if (musicInterval) clearTimeout(musicInterval);
+        statusTitle.innerHTML = "TIME OVER!";
+        finalScoreEl.innerText = `FINAL SCORE: ${score}`;
+        finalScoreEl.classList.remove('hidden');
+        startBtn.innerText = "RETRY ADVENTURE";
+        overlay.style.display = 'flex';
+    }
+
+    function updateUI() {
+        scoreEl.innerText = score;
+        const s = timeLeft.toString().padStart(2, '0');
+        timeEl.innerText = `00:${s}`;
+    }
+
+    function handleInput(clientX, clientY) {
+        if (!gameActive) return;
+        assets.arrows.push(new Arrow(clientX, clientY));
+        soundShoot();
+    }
+
+    startBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        startGame();
+    });
+
+    canvas.addEventListener('touchstart', (e) => {
+        if (!gameActive) return;
+        e.preventDefault();
+        handleInput(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: false });
+
+    canvas.addEventListener('mousedown', (e) => {
+        if (!gameActive) return;
+        handleInput(e.clientX, e.clientY);
+    });
+
+    function drawCupid() {
+        const x = assets.cupidX;
+        const y = assets.cupidY;
+        const hover = Math.sin(Date.now() / 200) * 10;
+        
+        ctx.fillStyle = "rgba(0,0,0,0.2)";
+        ctx.beginPath();
+        ctx.ellipse(x, y + 50, 24 + hover/2, 12, 0, 0, Math.PI*2);
+        ctx.fill();
+
+        ctx.fillStyle = "white";
+        ctx.fillRect(x - 32, y - 20 + hover, 20, 20);
+        ctx.fillRect(x + 12, y - 20 + hover, 20, 20);
+        
+        ctx.fillStyle = "#ffdbac";
+        ctx.fillRect(x - 14, y - 14 + hover, 28, 28);
+        
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(x - 14, y + 8 + hover, 28, 6);
+        
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.arc(x, y - 5 + hover, 24, Math.PI * 1.2, Math.PI * 1.8);
+        ctx.stroke();
+    }
+
+    function checkMatches() {
+        const targeted = assets.npcs.filter(n => n.hitCount > 0);
+        const boys = targeted.filter(n => !n.isGirl);
+        const girls = targeted.filter(n => n.isGirl);
+
+        if (boys.length >= 1 && girls.length >= 1) {
+            const boy = boys[0];
+            const girl = girls[0];
+            score += 1;
+            updateUI();
+            soundMatch();
+            assets.particles.push({
+                x: (boy.x + girl.x) / 2,
+                y: (boy.y + girl.y) / 2,
+                alpha: 1.0,
+                size: 60
+            });
+            assets.npcs = assets.npcs.filter(n => n !== boy && n !== girl);
+        }
+    }
+
+    function gameLoop() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (gameActive) {
+            if (Math.random() < 0.05) assets.npcs.push(new NPC());
+
+            assets.arrows.forEach((arrow) => {
+                arrow.update();
+                arrow.draw();
+                assets.npcs.forEach(npc => {
+                    const dx = arrow.x - npc.x;
+                    const dy = arrow.y - npc.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    if (dist < 30 && arrow.active) {
+                        arrow.active = false;
+                        npc.hitCount++;
+                        soundHit();
+                        checkMatches();
+                    }
+                });
+            });
+            assets.arrows = assets.arrows.filter(a => a.active);
+
+            assets.npcs.forEach((npc, index) => {
+                npc.update();
+                npc.draw();
+                if (npc.y > canvas.height + 60) {
+                    assets.npcs.splice(index, 1);
+                }
+            });
+
+            assets.particles.forEach((p, i) => {
+                p.y -= 3.5;
+                p.alpha -= 0.025;
+                ctx.globalAlpha = Math.max(0, p.alpha);
+                drawPixelHeart(p.x, p.y, p.size, "white");
+                ctx.globalAlpha = 1.0;
+                if (p.alpha <= 0) assets.particles.splice(i, 1);
+            });
+        }
+
+        drawCupid();
+        requestAnimationFrame(gameLoop);
+    }
+
+    window.addEventListener('load', () => {
+        resize();
+        gameLoop();
+    });
+</script>
+</body>
+</html>
